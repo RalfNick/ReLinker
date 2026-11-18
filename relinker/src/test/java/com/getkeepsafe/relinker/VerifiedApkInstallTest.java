@@ -91,4 +91,25 @@ public class VerifiedApkInstallTest {
             fail("expected invalid symbolic link");
         } catch (IllegalArgumentException expected) {}
     }
+
+    @Test public void restrictsChoicesToTheCurrentProcessOnDualArchitectureDevices() {
+        String[] supported32 = {"armeabi-v7a", "armeabi"};
+        String[] supported64 = {"arm64-v8a"};
+        assertArrayEquals(supported32, SystemLibraryLoader.processAbis(23, false, "arm64-v8a", supported32, supported64));
+        assertArrayEquals(supported64, SystemLibraryLoader.processAbis(23, true, "armeabi-v7a", supported32, supported64));
+        assertArrayEquals(supported32, SystemLibraryLoader.processAbis(21, false, "armeabi-v7a", supported32, supported64));
+        assertArrayEquals(supported64, SystemLibraryLoader.processAbis(22, false, "arm64-v8a", supported32, supported64));
+        assertArrayEquals(new String[]{"vendor"}, SystemLibraryLoader.processAbis(22, false, "vendor", supported32, supported64));
+    }
+
+    @Test public void choosesTheHighestRankedAbiAcrossBaseAndSplits() throws Exception {
+        File base = apk("base.apk", "lib/armeabi/" + library, new byte[] {1});
+        File split = apk("v7a.apk", "lib/armeabi-v7a/" + library, new byte[] {2});
+        String[] compatible = {"armeabi-v7a", "armeabi"};
+        File target = files.newFile(library);
+        installer.installFromApks(new String[]{base.getPath(), split.getPath()}, compatible, library, target, instance);
+        assertArrayEquals(new byte[]{2}, Files.readAllBytes(target.toPath()));
+        installer.installFromApks(new String[]{base.getPath()}, compatible, library, target, instance);
+        assertArrayEquals(new byte[]{1}, Files.readAllBytes(target.toPath()));
+    }
 }

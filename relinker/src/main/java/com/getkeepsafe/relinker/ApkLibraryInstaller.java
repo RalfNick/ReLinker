@@ -71,36 +71,54 @@ public class ApkLibraryInstaller implements ReLinker.LibraryInstaller {
                                                  final String mappedLibraryName,
                                                  final ReLinkerInstance instance) {
 
-        for (String sourceDir : apks) {
-            ZipFile zipFile = null;
-            int tries = 0;
-            while (tries++ < MAX_TRIES) {
+        ZipFileInZipEntry best = null;
+        int bestRank = abis.length;
+        try {
+            for (String sourceDir : apks) {
+                ZipFile candidate = openApk(sourceDir);
+                if (candidate == null) {
+                    continue;
+                }
                 try {
-                    zipFile = new ZipFile(new File(sourceDir), ZipFile.OPEN_READ);
+                    for (int rank = 0; rank < bestRank; rank++) {
+                        String name = "lib/" + abis[rank] + "/" + mappedLibraryName;
+                        instance.log("Looking for %s in APK %s...", name, sourceDir);
+                        ZipEntry entry = candidate.getEntry(name);
+                        if (entry != null) {
+                            if (best != null) {
+                                closeSilently(best.zipFile);
+                            }
+                            best = new ZipFileInZipEntry(candidate, entry);
+                            bestRank = rank;
+                            break;
+                        }
+                    }
+                } finally {
+                    if (best == null || best.zipFile != candidate) {
+                        closeSilently(candidate);
+                    }
+                }
+                if (bestRank == 0) {
                     break;
-                } catch (IOException ignored) {
                 }
             }
-
-            if (zipFile == null) {
-                continue;
+            return best;
+        } catch (RuntimeException | Error failure) {
+            if (best != null) {
+                closeSilently(best.zipFile);
             }
+            throw failure;
+        }
+    }
 
-            for (final String abi : abis) {
-                String name = "lib/" + abi + "/" + mappedLibraryName;
-                instance.log("Looking for %s in APK %s...", name, sourceDir);
-                ZipEntry entry = zipFile.getEntry(name);
-                if (entry != null) {
-                    return new ZipFileInZipEntry(zipFile, entry);
-                }
-            }
-
+    private ZipFile openApk(String sourceDir) {
+        for (int attempt = 0; attempt < MAX_TRIES; attempt++) {
             try {
-                zipFile.close();
+                return new ZipFile(sourceDir);
             } catch (IOException ignored) {
+                // Keep looking in the other installed splits if this APK remains unreadable.
             }
         }
-
         return null;
     }
 

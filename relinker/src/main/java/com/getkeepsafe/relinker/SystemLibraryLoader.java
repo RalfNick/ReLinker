@@ -1,5 +1,6 @@
 /*
  * Copyright 2015 - 2016 KeepSafe Software, Inc.
+ * Modified by RalfNick to select ABIs compatible with the calling process.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +18,9 @@ package com.getkeepsafe.relinker;
 
 import android.annotation.SuppressLint;
 import android.os.Build;
+import android.os.Process;
+
+import java.util.Arrays;
 
 @SuppressWarnings("deprecation")
 final class SystemLibraryLoader implements ReLinker.LibraryLoader {
@@ -49,12 +53,29 @@ final class SystemLibraryLoader implements ReLinker.LibraryLoader {
 
     @Override
     public String[] supportedAbis() {
-        if (Build.VERSION.SDK_INT >= 21 && Build.SUPPORTED_ABIS.length > 0) {
-            return Build.SUPPORTED_ABIS;
+        if (Build.VERSION.SDK_INT >= 21) {
+            boolean is64Bit = Build.VERSION.SDK_INT >= 23 && Process.is64Bit();
+            return processAbis(Build.VERSION.SDK_INT, is64Bit, Build.CPU_ABI,
+                    Build.SUPPORTED_32_BIT_ABIS, Build.SUPPORTED_64_BIT_ABIS);
         } else if (!TextUtils.isEmpty(Build.CPU_ABI2)) {
             return new String[] {Build.CPU_ABI, Build.CPU_ABI2};
         } else {
             return new String[] {Build.CPU_ABI};
         }
+    }
+
+    static String[] processAbis(int sdk, boolean is64Bit, String primary,
+                                String[] supported32, String[] supported64) {
+        if (sdk >= 23) {
+            return (is64Bit ? supported64 : supported32).clone();
+        }
+        // Lollipop sets CPU_ABI for this process even on a device supporting both bitnesses.
+        if (Arrays.asList(supported32).contains(primary)) {
+            return supported32.clone();
+        }
+        if (Arrays.asList(supported64).contains(primary)) {
+            return supported64.clone();
+        }
+        return TextUtils.isEmpty(primary) ? new String[0] : new String[] {primary};
     }
 }
