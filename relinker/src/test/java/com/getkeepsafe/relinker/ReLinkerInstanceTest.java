@@ -106,7 +106,8 @@ public class ReLinkerInstanceTest {
         tempFolder.newFile(mappedName + ".4.0");
         assertThat(libDir.listFiles().length, is(4));
         instance.force().cleanupOldLibFiles(context, TEST_LIB, "4.0");
-        assertThat(libDir.listFiles().length, is(0));
+        assertThat(libDir.listFiles().length, is(1));
+        assertThat(new File(libDir, mappedName + ".4.0").exists(), is(true));
     }
 
     @Test

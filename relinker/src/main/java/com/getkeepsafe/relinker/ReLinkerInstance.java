@@ -1,5 +1,6 @@
 /*
  * Copyright 2015 - 2016 KeepSafe Software, Inc.
+ * Modified by RalfNick to confine extracted files and check cached APK libraries.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -131,6 +132,11 @@ public class ReLinkerInstance {
             throw new IllegalArgumentException("Given library is either null or empty");
         }
 
+        checkFileComponent(library);
+        if (!TextUtils.isEmpty(version)) {
+            checkFileComponent(version);
+        }
+
         log("Beginning load of %s...", library);
         if (listener == null) {
             loadLibraryInternal(context, library, version);
@@ -143,6 +149,8 @@ public class ReLinkerInstance {
                         listener.success();
                     } catch (UnsatisfiedLinkError e) {
                         listener.failure(e);
+                    } catch (IllegalArgumentException e) {
+                        listener.failure(e);
                     } catch (MissingLibraryException e) {
                         listener.failure(e);
                     }
@@ -151,7 +159,7 @@ public class ReLinkerInstance {
         }
     }
 
-    private void loadLibraryInternal(final Context context,
+    private synchronized void loadLibraryInternal(final Context context,
                                      final String library,
                                      final String version) {
         if (loadedLibraries.contains(library) && !force) {
@@ -171,14 +179,13 @@ public class ReLinkerInstance {
 
         log("%s (%s) was not loaded normally, re-linking...", library, version);
         final File workaroundFile = getWorkaroundLibFile(context, library, version);
-        if (!workaroundFile.exists() || force) {
-            if (force) {
-                log("Forcing a re-link of %s (%s)...", library, version);
-            }
-
-            cleanupOldLibFiles(context, library, version);
+        boolean needsInstall = !workaroundFile.exists() || force;
+        if (needsInstall || libraryInstaller.getClass() == ApkLibraryInstaller.class) {
             libraryInstaller.installLibrary(context, libraryLoader.supportedAbis(),
                     libraryLoader.mapLibraryName(library), workaroundFile, this);
+        }
+        if (needsInstall) {
+            cleanupOldLibFiles(context, library, version);
         }
 
         try {
@@ -228,21 +235,36 @@ public class ReLinkerInstance {
                                         final String version) {
         final String libName = libraryLoader.mapLibraryName(library);
 
-        if (TextUtils.isEmpty(version)) {
-            return new File(getWorkaroundLibDir(context), libName);
+        checkFileComponent(libName);
+        if (!TextUtils.isEmpty(version)) {
+            checkFileComponent(version);
         }
+        String filename = TextUtils.isEmpty(version) ? libName : libName + "." + version;
+        try {
+            File parent = getWorkaroundLibDir(context);
+            File target = new File(parent, filename);
+            if (!new File(parent.getCanonicalFile(), filename).equals(target.getCanonicalFile())) {
+                throw new IllegalArgumentException("Library destination is a symbolic link");
+            }
+            return target;
+        } catch (IOException e) {
+            throw new IllegalArgumentException("Could not resolve library destination", e);
+        }
+    }
 
-        return new File(getWorkaroundLibDir(context), libName + "." + version);
+    private static void checkFileComponent(String value) {
+        if (TextUtils.isEmpty(value) || value.equals(".") || value.equals("..")
+                || value.indexOf('/') >= 0 || value.indexOf('\\') >= 0 || value.indexOf('\0') >= 0) {
+            throw new IllegalArgumentException("Expected a single library name or version");
+        }
     }
 
     /**
-     * Cleans up any <em>other</em> versions of the {@code library}. If {@code force} is used, all
-     * versions of the {@code library} are deleted
+     * Cleans up other versions after the current library has been installed successfully.
      *
      * @param context {@link Context} to retrieve the workaround directory from
      * @param library The name of the library to load
      * @param currentVersion The version of the library to keep, all other versions will be deleted.
-     *                       This parameter is ignored if {@code force} is used.
      */
     protected void cleanupOldLibFiles(final Context context,
                                       final String library,
@@ -253,14 +275,14 @@ public class ReLinkerInstance {
         final File[] existingFiles = workaroundDir.listFiles(new FilenameFilter() {
             @Override
             public boolean accept(File dir, String filename) {
-                return filename.startsWith(mappedLibraryName);
+                return filename.equals(mappedLibraryName) || filename.startsWith(mappedLibraryName + ".");
             }
         });
 
         if (existingFiles == null) return;
 
         for (final File file : existingFiles) {
-            if (force || !file.getAbsolutePath().equals(workaroundFile.getAbsolutePath())) {
+            if (!file.getName().equals(workaroundFile.getName())) {
                 file.delete();
             }
         }
